@@ -1,56 +1,39 @@
+require('dotenv').config()
 const express = require('express')
 const { response } = require('express')
 const morgan = require('morgan')
 const app = express()
 const cors = require('cors')
+const Person = require('./models/person')
 
 app.use(express.static('build'))
 app.use(express.json())
 app.use(morgan('tiny'))
 app.use(cors())
 
-let persons = [
-    {
-        name: "Arto Hellas",
-        number: "903285209",
-        id: 1
-    },
-    {
-        name: "Ada Lovelace",
-        number: "2034383",
-        id: 2
-    },
-    {
-        name: "Dan Abramov",
-        numbeid: "12-3423-4236",
-        id: 3
-    },
-    {
-        name: "Mary Poppendieck",
-        numbeid: "12-42341-2411",
-        id: 4
-    }
-]
-
 app.get('/info', (req, res) => {
-    const nof = persons.length
-    const text = "Phonebook has info for " + nof + " people\n"
-    const date = new Date()
-    const datestring = date.toDateString()
-    const timestring = date.toTimeString()
-    res.send(text + datestring + " " + timestring)
+    Person.countDocuments({}).then(count => {
+        const text = "Phonebook has info for " + count  + " people\n"
+        const date = new Date()
+        const datestring = date.toDateString()
+        const timestring = date.toTimeString()
+        res.send(text + datestring + " " + timestring)
+    })
 })
 
 app.get('/api/persons', (request, response) => {
-    response.json(persons)
+    Person.find({}).then(persons => {
+        response.json(persons)
+    })
 })
 
+// Not used anymore, database generates id randomly
 const generateId = () => {
     const id = Math.floor(Math.random() * 10000)
     return id
 }
 
-app.post('/api/persons', (request, response) => {
+app.post('/api/persons', (request, response, next) => {
     const body = request.body
 
     if (!body.name) {
@@ -65,7 +48,7 @@ app.post('/api/persons', (request, response) => {
         })
     }
 
-    const isNameUnique = !persons.some(person => person.name === body.name)
+    const isNameUnique = true || !persons.some(person => person.name === body.name)
 
     if (!isNameUnique) {
         return response.status(400).json({
@@ -73,37 +56,80 @@ app.post('/api/persons', (request, response) => {
         })
     }
 
-    person = {
+    const person = new Person({
         name: body.name,
         number: body.number,
-        id: generateId()
-    }
+    })
 
-    persons = persons.concat(person)
-
-    response.json(person)
+    person.save().then(savedPerson => {
+        response.json(savedPerson)
+    })
+    .catch(error => next(error))
 })
 
-app.get('/api/persons/:id', (req, res) => {
-    const id = Number(req.params.id)
-    const person = persons.find(person => person.id === id)
 
-    if (person) {
+app.get('/api/persons/:id', (req, res, next) => {
+    Person.findById(req.params.id)
+    .then(person => {
+      if (person) {
         res.json(person)
-    } else {
+      } else {
         res.status(404).end()
+      }
+    })
+    .catch(error => next(error))
+})
+
+app.delete('/api/persons/:id', (request, response, next) => {
+    Person.findByIdAndRemove(request.params.id)
+    .then(result => {
+      response.status(204).end()
+    })
+    .catch(error => next(error))
+})
+
+app.put('/api/persons/:id', (request, response, next) => {
+    const body = request.body
+
+    const person = {
+        name: body.name,
+        number: body.number,
     }
+
+    Person.findByIdAndUpdate(request.params.id, person, { new: true })
+    .then(updatedPerson => {
+        response.json(updatedPerson)
+    })
+    .catch(error => next(error))
 })
 
-app.delete('/api/persons/:id', (request, response) => {
-    const id = Number(request.params.id)
-    persons = persons.filter(person => person.id !== id)
-    console.log(persons)
+//////////////////Virheiden käsittelyä//////////////////////////
 
-    response.status(204).end()
-})
+const unknownEndpoint = (request, response) => {
+    response.status(404).send({ error: 'unknown endpoint' })
+}
 
-const PORT = process.env.PORT || 3001
+// olemattomien osotteiden käsittely
+app.use(unknownEndpoint)
+
+const errorHandler = (error, request, response, next) => {
+    console.error(error.message)
+  
+    if (error.name === 'CastError') {
+        return response.status(400).send({ error: 'malformatted id' })
+    } else if (error.name === 'ValidationError') {
+        return response.status(400).json({ error: error.message })
+    }
+  
+    next(error)
+}
+
+// virheellisten pyyntöjen käsittely
+app.use(errorHandler)
+
+///////////////////////////////////////////////////////////////
+
+const PORT = process.env.PORT
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`)
 })
